@@ -18,6 +18,7 @@ public final class TerrainDiffusionConfig {
     private static final float DEFAULT_C = 30.0f;
     private static final int DEFAULT_SCALE = 2;
     private static final String DEFAULT_INFERENCE_DEVICE = "auto";
+    private static final boolean DEFAULT_OFFLOAD_MODELS = true;
 
     static {
         loadDefaults();
@@ -46,6 +47,11 @@ public final class TerrainDiffusionConfig {
     /** Inference device: "cpu", "gpu", or "auto" (try GPU then fall back to CPU). */
     public static String inferenceDevice() {
         return readString("inference.device", DEFAULT_INFERENCE_DEVICE);
+    }
+
+    /** Whether to offload inactive models from VRAM between pipeline stages. */
+    public static boolean offloadModels() {
+        return readBoolean("inference.offload_models", DEFAULT_OFFLOAD_MODELS);
     }
 
     private static void loadDefaults() {
@@ -105,6 +111,11 @@ public final class TerrainDiffusionConfig {
         } catch (IOException e) {
             System.err.println("Failed to write config file: " + e.getMessage());
         }
+    }
+
+    private static boolean readBoolean(String key, boolean defaultValue) {
+        String value = PROPERTIES.getProperty(key);
+        return value != null ? Boolean.parseBoolean(value.trim()) : defaultValue;
     }
 
     private static int readInt(String key, int defaultValue) {

@@ -1,6 +1,7 @@
 package com.github.xandergos.terraindiffusionmc.pipeline;
 
 import ai.onnxruntime.*;
+import ai.onnxruntime.providers.OrtCUDAProviderOptions;
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,39 +12,59 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Thin wrapper around ONNX Runtime for running WorldPipeline EDMUnet2D models.
+ * Thin wrapper around ONNX Runtime with aggressive VRAM optimization.
  *
- * <p>Input/output naming follows the convention from terrain_diffusion/onnx/export.py:
- * inputs are "x", "noise_labels", "cond_0", "cond_1", ... and output is "output".
+ * <p>Only one model is resident in GPU VRAM at a time (GPU-slot swapping).
+ * Model weights are kept in CPU RAM between inference calls and uploaded to
+ * GPU on demand. This keeps peak VRAM to a single model's footprint instead
+ * of all three simultaneously.
  */
 public final class OnnxModel implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(OnnxModel.class);
 
+    // GPU slot: when offload_models=true, only one session is alive at a time.
+    private static final Object GPU_SLOT_LOCK = new Object();
+    private static OnnxModel gpuSlotHolder = null;
+    private static OrtSession activeGpuSession = null;
+
     private final OrtEnvironment env;
-    private final OrtSession session;
+    private final byte[] modelBytes;  // weights held in CPU RAM when offloading
     private final String name;
+    private OrtSession cpuSession;    // non-null in CPU-only mode
+    private OrtSession gpuSession;    // non-null when offload_models=false
 
     public OnnxModel(String resourcePath, String name) {
         this.name = name;
         try {
-            LOG.debug("Loading ONNX model '{}' from {}", name, resourcePath);
             long start = System.currentTimeMillis();
-            this.env = OrtEnvironment.getEnvironment();
-            OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
-            opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
-            applyExecutionProviders(opts);
-            byte[] modelBytes;
+            this.env = OrtEnvironment.getEnvironment(OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR);
             try (InputStream is = OnnxModel.class.getResourceAsStream(resourcePath)) {
                 if (is == null) throw new RuntimeException("Model not found: " + resourcePath);
-                modelBytes = is.readAllBytes();
+                this.modelBytes = is.readAllBytes();
             }
-            this.session = env.createSession(modelBytes, opts);
-            long elapsed = System.currentTimeMillis() - start;
-            int sizeKb = modelBytes.length / 1024;
-            LOG.info("ONNX model '{}' loaded ({} KB) in {} ms", name, sizeKb, elapsed);
+            if ("cpu".equals(TerrainDiffusionConfig.inferenceDevice())) {
+                OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
+                opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+                this.cpuSession = env.createSession(modelBytes, opts);
+                this.gpuSession = null;
+                LOG.info("ONNX model '{}' loaded on CPU ({} KB) in {} ms",
+                        name, modelBytes.length / 1024, System.currentTimeMillis() - start);
+            } else if (!TerrainDiffusionConfig.offloadModels()) {
+                OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
+                opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+                addGpuProvider(opts);
+                this.gpuSession = env.createSession(modelBytes, opts);
+                this.cpuSession = null;
+                LOG.info("ONNX model '{}' loaded on GPU ({} KB) in {} ms",
+                        name, modelBytes.length / 1024, System.currentTimeMillis() - start);
+            } else {
+                this.cpuSession = null;
+                this.gpuSession = null;
+                LOG.info("ONNX model '{}' bytes cached in CPU RAM ({} KB) in {} ms",
+                        name, modelBytes.length / 1024, System.currentTimeMillis() - start);
+            }
         } catch (Exception e) {
-            LOG.error("Failed to load ONNX model '{}' from {}", name, resourcePath, e);
             throw new RuntimeException("Failed to load ONNX model: " + resourcePath, e);
         }
     }
@@ -55,23 +76,15 @@ public final class OnnxModel implements AutoCloseable {
      * @return the output tensor as a flat float array
      */
     public float[] run(Object[][] inputs) {
-        Map<String, OnnxTensor> feed = new LinkedHashMap<>();
-        try {
-            for (Object[] inp : inputs) {
-                String inputName = (String) inp[0];
-                float[] data = (float[]) inp[1];
-                long[] shape = (long[]) inp[2];
-                FloatBuffer buf = FloatBuffer.wrap(data);
-                feed.put(inputName, OnnxTensor.createTensor(env, buf, shape));
-            }
-            try (OrtSession.Result result = session.run(feed)) {
-                OnnxTensor output = (OnnxTensor) result.get(0);
-                return flattenOnnxOutput(output);
-            }
-        } catch (OrtException e) {
-            throw new RuntimeException("ONNX inference failed for model: " + name, e);
-        } finally {
-            for (OnnxTensor t : feed.values()) t.close();
+        if (cpuSession != null) {
+            return runWithSession(cpuSession, inputs);
+        }
+        if (gpuSession != null) {
+            return runWithSession(gpuSession, inputs);
+        }
+        synchronized (GPU_SLOT_LOCK) {
+            claimGpuSlot();
+            return runWithSession(activeGpuSession, inputs);
         }
     }
 
@@ -83,29 +96,58 @@ public final class OnnxModel implements AutoCloseable {
         Object[][] inputs = new Object[2 + nCond][3];
         inputs[0] = new Object[]{"x", x, xShape};
         inputs[1] = new Object[]{"noise_labels", noiseLabels, new long[]{noiseLabels.length}};
-        for (int i = 0; i < nCond; i++) {
+        for (int i = 0; i < nCond; i++)
             inputs[2 + i] = new Object[]{"cond_" + i, condInputs[i], condShapes[i]};
-        }
         return run(inputs);
     }
 
-    private static void applyExecutionProviders(OrtSession.SessionOptions opts) throws OrtException {
-        String device = TerrainDiffusionConfig.inferenceDevice();
-        if ("cpu".equals(device)) {
-            LOG.info("Terrain diffusion inference: CPU");
-            return;
+    /**
+     * Evicts the current GPU session if this model doesn't hold the slot,
+     * then creates a fresh GPU session from CPU-cached weights.
+     * Must be called under GPU_SLOT_LOCK.
+     */
+    private void claimGpuSlot() {
+        if (gpuSlotHolder == this) return;
+
+        if (activeGpuSession != null) {
+            LOG.debug("Evicting '{}' from GPU, loading '{}'",
+                    gpuSlotHolder != null ? gpuSlotHolder.name : "?", name);
+            try { activeGpuSession.close(); } catch (OrtException ignored) {}
+            activeGpuSession = null;
+            gpuSlotHolder = null;
         }
 
-        boolean gpuRequired = "gpu".equals(device);
+        try {
+            OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
+            opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+            addGpuProvider(opts);
+            activeGpuSession = env.createSession(modelBytes, opts);
+            gpuSlotHolder = this;
+            LOG.debug("GPU session ready for '{}'", name);
+        } catch (OrtException e) {
+            throw new RuntimeException("Failed to create GPU session for: " + name, e);
+        }
+    }
+
+    private static void addGpuProvider(OrtSession.SessionOptions opts) throws OrtException {
+        boolean gpuRequired = "gpu".equals(TerrainDiffusionConfig.inferenceDevice());
         boolean added = false;
 
         try {
-            opts.addCUDA(0);
+            OrtCUDAProviderOptions cudaOpts = new OrtCUDAProviderOptions(0);
+            // Only grow the BFC arena by exactly what is needed, never pre-allocate.
+            cudaOpts.add("arena_extend_strategy", "kSameAsRequested");
+            // Heuristic: fast startup, no exhaustive benchmarking, workspace-efficient.
+            cudaOpts.add("cudnn_conv_algo_search", "HEURISTIC");
+            cudaOpts.add("do_copy_in_default_stream", "1");
+            opts.addCUDA(cudaOpts);
+            cudaOpts.close();
             added = true;
             LOG.info("Terrain diffusion inference: GPU (CUDA)");
         } catch (Throwable t) {
             LOG.warn("CUDA not available: {} - {}", t.getClass().getSimpleName(), t.getMessage());
         }
+
         if (!added) {
             try {
                 opts.addDirectML(0);
@@ -116,27 +158,54 @@ public final class OnnxModel implements AutoCloseable {
             }
         }
         if (gpuRequired && !added) {
-            throw new OrtException("inference.device=gpu but neither CUDA nor DirectML is available. Use the GPU build or set inference.device=cpu.");
+            throw new OrtException(
+                    "inference.device=gpu but neither CUDA nor DirectML is available. " +
+                    "Use the GPU build or set inference.device=cpu.");
         }
         if (!added) {
             LOG.info("Terrain diffusion inference: CPU (fallback)");
-            LOG.warn("No GPU provider loaded. Check that the mod jar is the GPU build (no -cpu suffix) and drivers are installed (NVIDIA: CUDA; Windows: DirectX 12).");
+            LOG.warn("No GPU provider loaded. Check drivers and that the mod jar is the GPU build.");
         }
     }
 
-    private static float[] flattenOnnxOutput(OnnxTensor tensor) throws OrtException {
-        FloatBuffer buf = tensor.getFloatBuffer();
-        float[] out = new float[buf.remaining()];
-        buf.get(out);
-        return out;
+    private static float[] runWithSession(OrtSession session, Object[][] inputs) {
+        Map<String, OnnxTensor> feed = new LinkedHashMap<>();
+        OrtEnvironment env = OrtEnvironment.getEnvironment();
+        try {
+            for (Object[] inp : inputs) {
+                feed.put((String) inp[0],
+                        OnnxTensor.createTensor(env, FloatBuffer.wrap((float[]) inp[1]), (long[]) inp[2]));
+            }
+            try (OrtSession.Result result = session.run(feed)) {
+                OnnxTensor output = (OnnxTensor) result.get(0);
+                FloatBuffer buf = output.getFloatBuffer();
+                float[] out = new float[buf.remaining()];
+                buf.get(out);
+                return out;
+            }
+        } catch (OrtException e) {
+            throw new RuntimeException("ONNX inference failed", e);
+        } finally {
+            for (OnnxTensor t : feed.values()) t.close();
+        }
     }
 
     @Override
     public void close() {
-        try {
-            session.close();
-        } catch (OrtException e) {
-            // ignore on close
+        synchronized (GPU_SLOT_LOCK) {
+            if (gpuSlotHolder == this && activeGpuSession != null) {
+                try { activeGpuSession.close(); } catch (OrtException ignored) {}
+                activeGpuSession = null;
+                gpuSlotHolder = null;
+            }
+        }
+        if (cpuSession != null) {
+            try { cpuSession.close(); } catch (OrtException ignored) {}
+            cpuSession = null;
+        }
+        if (gpuSession != null) {
+            try { gpuSession.close(); } catch (OrtException ignored) {}
+            gpuSession = null;
         }
     }
 }

@@ -25,8 +25,8 @@ public final class WorldPipeline implements AutoCloseable {
     static final int COARSE_TILE_STRIDE = 48;
     static final int LATENT_TILE_SIZE   = 64;
     static final int LATENT_TILE_STRIDE = 32;
-    static final int DECODER_TILE_SIZE  = 512;
-    static final int DECODER_TILE_STRIDE = 384;
+    static final int DECODER_TILE_SIZE  = 256;
+    static final int DECODER_TILE_STRIDE = 192;
 
     static final float[] MODEL_MEANS = {
             -37.70000792952155f, 1.1403065255556186f, 18.102486588653473f,
