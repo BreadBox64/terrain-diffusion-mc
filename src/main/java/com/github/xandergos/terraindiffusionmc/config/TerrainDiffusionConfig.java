@@ -19,6 +19,7 @@ public final class TerrainDiffusionConfig {
     private static final int DEFAULT_SCALE = 2;
     private static final String DEFAULT_INFERENCE_DEVICE = "auto";
     private static final boolean DEFAULT_OFFLOAD_MODELS = true;
+    private static final int DEFAULT_EXPLORER_PORT = 19842;
 
     static {
         loadDefaults();
@@ -52,6 +53,11 @@ public final class TerrainDiffusionConfig {
     /** Whether to offload inactive models from VRAM between pipeline stages. */
     public static boolean offloadModels() {
         return readBoolean("inference.offload_models", DEFAULT_OFFLOAD_MODELS);
+    }
+
+    /** TCP port for the local terrain explorer HTTP server. */
+    public static int explorerPort() {
+        return readInt("explorer.port", DEFAULT_EXPLORER_PORT);
     }
 
     private static void loadDefaults() {

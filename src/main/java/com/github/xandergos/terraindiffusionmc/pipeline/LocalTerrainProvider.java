@@ -1,10 +1,13 @@
 package com.github.xandergos.terraindiffusionmc.pipeline;
 
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
+import com.github.xandergos.terraindiffusionmc.infinitetensor.FloatTensor;
 
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Random;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -102,6 +105,60 @@ public final class LocalTerrainProvider {
             CACHE.clear();
         }
         PENDING.clear();
+    }
+
+    // =========================================================================
+    // Explorer API — all pipeline calls routed through INFERENCE_EXECUTOR
+    // =========================================================================
+
+    /** Returns the current world seed used by the pipeline. */
+    public static long getSeed() {
+        return instanceSeed;
+    }
+
+    /**
+     * Run elevation and climate inference on the inference thread.
+     *
+     * @return float[2]: [0] = elev (H*W), [1] = climate (5*H*W, or null)
+     */
+    public static float[][] getPipelineData(int i1, int j1, int i2, int j2, boolean withClimate) throws Exception {
+        return submitToInferenceThread(() -> getInstance().pipeline.get(i1, j1, i2, j2, withClimate));
+    }
+
+    /**
+     * Fetch a coarse tensor slice on the inference thread.
+     * Coordinates are in coarse index units (1 unit = 256 native pixels).
+     *
+     * @return FloatTensor with shape [7, ci1-ci0, cj1-cj0]
+     */
+    public static FloatTensor getPipelineCoarse(int ci0, int cj0, int ci1, int cj1) throws Exception {
+        return submitToInferenceThread(() -> getInstance().pipeline.getCoarseSlice(ci0, cj0, ci1, cj1));
+    }
+
+    /**
+     * Change the world seed used by the pipeline and clear all caches.
+     * Note: this also affects terrain generation for new Minecraft chunks.
+     */
+    public static void changeSeedFromExplorer(long newSeed) throws Exception {
+        submitToInferenceThread(() -> {
+            LocalTerrainProvider provider = getInstance();
+            provider.pipeline.setSeed(newSeed);
+            instanceSeed = newSeed;
+            synchronized (CACHE_LOCK) { CACHE.clear(); }
+            PENDING.clear();
+            return null;
+        });
+    }
+
+    /** Change to a random new seed; returns the new seed value. */
+    public static long generateRandomSeedFromExplorer() throws Exception {
+        long newSeed = new Random().nextLong();
+        changeSeedFromExplorer(newSeed);
+        return newSeed;
+    }
+
+    private static <T> T submitToInferenceThread(Callable<T> task) throws Exception {
+        return INFERENCE_EXECUTOR.submit(task).get();
     }
 
     /**

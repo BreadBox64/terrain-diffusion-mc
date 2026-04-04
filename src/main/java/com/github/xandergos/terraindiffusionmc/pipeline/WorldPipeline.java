@@ -423,6 +423,20 @@ public final class WorldPipeline implements AutoCloseable {
     // Public API
     // =========================================================================
 
+    /** Returns the current world seed. */
+    public long getSeed() {
+        return seed;
+    }
+
+    /**
+     * Returns a coarse tensor slice with shape [7, ci1-ci0, cj1-cj0].
+     * Coordinates are in coarse index units (1 unit = 256 native pixels).
+     * Channel 6 is the blend weight; channels 0–5 are weighted sums.
+     */
+    public FloatTensor getCoarseSlice(int ci0, int cj0, int ci1, int cj1) {
+        return coarse.getSlice(new int[]{0, ci0, cj0}, new int[]{7, ci1, cj1});
+    }
+
     /**
      * Get elevation and climate for a bounding box.
      *
