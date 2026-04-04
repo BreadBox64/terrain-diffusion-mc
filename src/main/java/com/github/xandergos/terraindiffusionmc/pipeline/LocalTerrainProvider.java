@@ -1,7 +1,7 @@
 package com.github.xandergos.terraindiffusionmc.pipeline;
 
-import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.infinitetensor.FloatTensor;
+import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
 
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -174,7 +174,7 @@ public final class LocalTerrainProvider {
             if (cached != null) return cached;
         }
 
-        int scale = TerrainDiffusionConfig.scale();
+        int scale = WorldScaleManager.getCurrentScale();
         FutureTask<HeightmapData> task = new FutureTask<>(() -> {
             HeightmapData data = scale <= 1
                     ? handle1x(i1, j1, i2, j2)

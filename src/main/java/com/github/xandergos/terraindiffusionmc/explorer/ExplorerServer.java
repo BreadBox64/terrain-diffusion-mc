@@ -3,6 +3,7 @@ package com.github.xandergos.terraindiffusionmc.explorer;
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.infinitetensor.FloatTensor;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider;
+import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
 import com.google.gson.Gson;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -129,7 +130,7 @@ public final class ExplorerServer {
             resp.put("seed", Long.toUnsignedString(LocalTerrainProvider.getSeed()));
             resp.put("channels", Arrays.asList(CHANNEL_NAMES));
             resp.put("native_resolution", NATIVE_RESOLUTION);
-            resp.put("scale", TerrainDiffusionConfig.scale());
+            resp.put("scale", WorldScaleManager.getCurrentScale());
             sendJson(ex, 200, resp);
         } catch (Exception e) {
             sendError(ex, 500, e.getMessage());
