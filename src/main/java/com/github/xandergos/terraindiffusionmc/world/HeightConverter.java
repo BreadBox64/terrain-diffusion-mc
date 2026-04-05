@@ -1,11 +1,13 @@
 package com.github.xandergos.terraindiffusionmc.world;
 
+import com.github.xandergos.terraindiffusionmc.pipeline.WorldPipelineModelConfig;
+
 public class HeightConverter {
     private static final int SEA_LEVEL = 63;
     private static final short MAX_PIPELINE_METERS = 10_000;
 
     private static float getResolutionForScale(int configuredScale) {
-        return 30f / WorldScaleManager.clampScale(configuredScale);
+        return WorldPipelineModelConfig.nativeResolution() / WorldScaleManager.clampScale(configuredScale);
     }
 
     public static int convertToMinecraftHeight(short meters) {

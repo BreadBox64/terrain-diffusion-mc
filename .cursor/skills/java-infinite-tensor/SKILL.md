@@ -97,3 +97,5 @@ The Python `WorldPipeline` uses `caching_strategy='direct'` with `cache_limit=10
 
 Python source: `/home/agos/dev/terrain-diffusion/terrain_diffusion/inference/world_pipeline.py`  
 Python library: `/home/agos/dev/infinite-tensor/infinite_tensor/`
+
+Model-specific constants that may vary between trained checkpoints (for example `coarse_means`, `coarse_stds`, `cond_snr`, `latent_compression`, `native_resolution`, `residual_mean`, `residual_std`, `frequency_mult`) are loaded from `src/main/resources/world_pipeline_config.json` via `WorldPipelineModelConfig` instead of being hard-coded in `WorldPipeline`.

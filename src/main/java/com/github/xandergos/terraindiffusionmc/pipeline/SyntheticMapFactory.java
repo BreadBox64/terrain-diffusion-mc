@@ -19,7 +19,7 @@ import java.util.Objects;
 public final class SyntheticMapFactory {
 
     private static final int N_CHANNELS = 5;
-    private static final float[] FREQUENCY_MULT = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    private static final float[] FREQUENCY_MULT = WorldPipelineModelConfig.frequencyMultipliers();
     private static final float BASE_FREQUENCY = 0.05f;
     private static final int[] OCTAVES = {4, 2, 4, 4, 4};
     private static final float LACUNARITY = 2.0f;

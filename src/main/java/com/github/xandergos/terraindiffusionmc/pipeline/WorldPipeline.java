@@ -18,7 +18,7 @@ public final class WorldPipeline implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(WorldPipeline.class);
 
-    static final int LATENT_COMPRESSION = 8;
+    static final int LATENT_COMPRESSION = WorldPipelineModelConfig.latentCompression();
     static final float SIGMA_DATA = EDMScheduler.SIGMA_DATA;
 
     static final int COARSE_TILE_SIZE   = 64;
@@ -28,24 +28,24 @@ public final class WorldPipeline implements AutoCloseable {
     static final int DECODER_TILE_SIZE  = 256;
     static final int DECODER_TILE_STRIDE = 192;
 
-    static final float[] MODEL_MEANS = {
-            -37.70000792952155f, 1.1403065255556186f, 18.102486588653473f,
-            332.8342598198454f, 1332.2078969994473f, 52.660088206981435f};
-    static final float[] MODEL_STDS = {
-            39.741999742263f, 1.7681844104569366f, 8.92146918789914f,
-            321.7660336396054f, 842.9293648884745f, 31.079985318715785f};
+    static final float[] MODEL_MEANS = WorldPipelineModelConfig.coarseMeans();
+    static final float[] MODEL_STDS = WorldPipelineModelConfig.coarseStds();
 
     static final float[] COND_MEANS = {14.99f, 11.65f, 15.87f, 619.26f, 833.12f, 69.40f, 0.66f};
     static final float[] COND_STDS  = {21.72f, 21.78f, 10.40f, 452.29f, 738.09f, 34.59f, 0.47f};
 
     static final float LOWFREQ_MEAN  = -31.4f;
     static final float LOWFREQ_STD   = 38.6f;
-    static final float RESIDUAL_MEAN = 0.0f;
-    static final float RESIDUAL_STD  = 0.7f;
+    static final float RESIDUAL_MEAN = WorldPipelineModelConfig.residualMean();
+    static final float RESIDUAL_STD  = WorldPipelineModelConfig.residualStd();
 
-    static final float[] COND_SNR  = {0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
+    static final float[] COND_SNR  = WorldPipelineModelConfig.conditioningSnr();
+    static final int COARSE_POOLING = WorldPipelineModelConfig.coarsePooling();
     static final float[] COND_VALS;  // log(COND_SNR / 8)
     static {
+        if (COARSE_POOLING != 1) {
+            throw new IllegalStateException("coarse_pooling=" + COARSE_POOLING + " is not supported in the Java pipeline yet");
+        }
         COND_VALS = new float[COND_SNR.length];
         for (int i = 0; i < COND_SNR.length; i++) COND_VALS[i] = (float) Math.log(COND_SNR[i] / 8.0);
     }
@@ -53,12 +53,15 @@ public final class WorldPipeline implements AutoCloseable {
     // mp_concat scales for 6 tensors of sizes [16, 16, 4, 16, 5, 1] → 58 total
     static final int[] COND_DIMS = {16, 16, 4, 16, 5, 1};
     static final float[] MP_CONCAT_SCALES;
+    static final float[] HISTOGRAM_RAW;
     static {
         int sumN = 0; for (int n : COND_DIMS) sumN += n;
         int k = COND_DIMS.length;
         float C = (float) Math.sqrt((double) sumN * k);
         MP_CONCAT_SCALES = new float[k];
         for (int i = 0; i < k; i++) MP_CONCAT_SCALES[i] = C / (float) Math.sqrt(COND_DIMS[i]) / k;
+        float[] configuredHistogramRaw = WorldPipelineModelConfig.histogramRaw();
+        HISTOGRAM_RAW = configuredHistogramRaw != null ? configuredHistogramRaw : new float[]{0f, 0f, 0f, 0f, 0f};
     }
 
     private final OnnxModel coarseModel;
@@ -347,7 +350,7 @@ public final class WorldPipeline implements AutoCloseable {
         }
 
         float noiseLevelNorm = (0f - 0.5f) * (float) Math.sqrt(12.0);
-        float[] histRaw = {0f, 0f, 0f, 0f, 0f};
+        float[] histRaw = HISTOGRAM_RAW;
 
         // mp_concat
         float[] out = new float[58];

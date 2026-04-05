@@ -1095,7 +1095,7 @@
       const data = await res.json();
       state.seed = data.seed;
       state.channels = data.channels;
-      state.nativeResolution = data.native_resolution || 30;
+      state.nativeResolution = data.native_resolution ?? state.nativeResolution;
       // Scale is fixed to the mod's configured value (blocks per native pixel)
       state.coordScale = data.scale || 1;
       seedDisplay.textContent = data.seed;

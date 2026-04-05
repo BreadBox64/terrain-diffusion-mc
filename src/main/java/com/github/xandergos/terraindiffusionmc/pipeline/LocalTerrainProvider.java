@@ -17,13 +17,13 @@ import java.util.concurrent.FutureTask;
 /**
  * Provides terrain heightmap and biome data from the local WorldPipeline.
  *
- * <p>When scale=1 the pipeline is sampled at native 30m resolution directly.
+ * <p>When scale=1 the pipeline is sampled at native model resolution directly.
  * When scale>1 the pipeline is sampled at native resolution and the result is
- * bilinearly upsampled, giving 1 block = 30m/scale (e.g. scale=2 → 15m/block).
+ * bilinearly upsampled, giving 1 block = nativeResolution/scale.
  */
 public final class LocalTerrainProvider {
 
-    private static final float NATIVE_RESOLUTION = 30f;
+    private static final float NATIVE_RESOLUTION = WorldPipelineModelConfig.nativeResolution();
 
     private static final FastNoiseLite ELEV_NOISE_COARSE = makeFnl(99999, 1f/24f, 3, 2f, 0.5f);
     private static final FastNoiseLite ELEV_NOISE_FINE   = makeFnl(88888, 1f/6f,  2, 2f, 0.6f);

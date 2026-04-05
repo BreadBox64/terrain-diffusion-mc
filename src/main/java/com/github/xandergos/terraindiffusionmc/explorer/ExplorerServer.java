@@ -3,6 +3,7 @@ package com.github.xandergos.terraindiffusionmc.explorer;
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.infinitetensor.FloatTensor;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider;
+import com.github.xandergos.terraindiffusionmc.pipeline.WorldPipelineModelConfig;
 import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
 import com.google.gson.Gson;
 import com.sun.net.httpserver.HttpExchange;
@@ -42,7 +43,7 @@ public final class ExplorerServer {
     private static final Gson GSON = new Gson();
 
     private static final String[] CHANNEL_NAMES = {"Elev", "p5", "Temp", "T std", "Precip", "Precip CV"};
-    private static final float NATIVE_RESOLUTION = 30f;
+    private static final float NATIVE_RESOLUTION = WorldPipelineModelConfig.nativeResolution();
 
     private static volatile HttpServer SERVER;
     private static volatile int SERVER_PORT = -1;
