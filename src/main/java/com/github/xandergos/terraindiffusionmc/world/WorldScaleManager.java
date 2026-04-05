@@ -8,6 +8,7 @@ import net.minecraft.server.world.ServerWorld;
 public final class WorldScaleManager {
     public static final int DEFAULT_SCALE = 2;
     private static final int MIN_SCALE = 1;
+    public static final int MAX_SCALE = 6;
 
     private static volatile int currentScale = DEFAULT_SCALE;
 
@@ -55,6 +56,6 @@ public final class WorldScaleManager {
      * Clamps world scale to supported runtime bounds.
      */
     public static int clampScale(int configuredScale) {
-        return Math.max(MIN_SCALE, configuredScale);
+        return Math.max(MIN_SCALE, Math.min(MAX_SCALE, configuredScale));
     }
 }
