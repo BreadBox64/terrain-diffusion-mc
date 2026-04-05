@@ -120,3 +120,4 @@ runs/
 
 bin/
 .history/
+*.onnx
