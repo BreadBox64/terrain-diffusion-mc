@@ -3,6 +3,10 @@ package com.github.xandergos.terraindiffusionmc.explorer;
 /**
  * Canonical matplotlib 256-entry LUTs for viridis, terrain, and RdBu_r.
  * Values are verbatim from matplotlib (same data used in the Python explorer).
+*
+ * <p>matplotlib is Copyright (c) 2012-2024 Matplotlib Development Team and
+ * is distributed under the matplotlib license (BSD-compatible).
+ * See <a href="https://matplotlib.org/stable/users/project/license.html">matplotlib license</a>.
  */
 public final class Colormaps {
 
