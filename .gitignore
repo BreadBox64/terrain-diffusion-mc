@@ -122,3 +122,4 @@ bin/
 .history/
 *.onnx
 .cursor/
+.vscode/
