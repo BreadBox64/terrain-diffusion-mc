@@ -21,7 +21,7 @@ When creating a world, select the **Terrain Diffusion** world type. Click **Cust
 
 ## Exploring the World
 
-The mod includes a built-in terrain explorer web UI. Run the `/td-explore` command in-game; it will print a clickable link (e.g. `http://localhost:19842`) that opens an interactive map in your browser. Click the map on the left to open a "detailed view". Click the detailed view to get coordinates in the bottom left. You can also filter for certain climates.
+The mod includes a built-in terrain explorer web UI. Run the `/td-explore` command in-game; it will print a clickable link (e.g. `http://localhost:19801`) that opens an interactive map in your browser. Click the map on the left to open a "detailed view". Click the detailed view to get coordinates in the bottom left. You can also filter for certain climates.
 
 Use the explorer to scout continents, mountains, islands, and other interesting terrain before venturing out in Minecraft.
 
@@ -42,7 +42,7 @@ inference.device=gpu
 inference.offload_models=true
 
 # Port for the local terrain explorer web UI (/td-explore).
-explorer.port=19842
+explorer.port=19801
 ```
 
 ### Per-world settings

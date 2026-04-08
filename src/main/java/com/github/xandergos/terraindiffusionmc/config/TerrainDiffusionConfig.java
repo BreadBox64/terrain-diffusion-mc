@@ -14,9 +14,9 @@ public final class TerrainDiffusionConfig {
     private static final String FILE_NAME = "terrain-diffusion-mc.properties";
     private static final String RESOURCE_PATH = "/" + FILE_NAME;
     private static final Properties PROPERTIES = new Properties();
-    private static final String DEFAULT_INFERENCE_DEVICE = "auto";
+    private static final String DEFAULT_INFERENCE_DEVICE = "gpu";
     private static final boolean DEFAULT_OFFLOAD_MODELS = true;
-    private static final int DEFAULT_EXPLORER_PORT = 19842;
+    private static final int DEFAULT_EXPLORER_PORT = 19801;
 
     static {
         loadDefaults();
