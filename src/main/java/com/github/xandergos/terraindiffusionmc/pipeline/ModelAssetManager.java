@@ -4,6 +4,8 @@ import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import net.fabricmc.loader.api.FabricLoader;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -36,6 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@code .minecraft/terrain-diffusion-models}.
  */
 public final class ModelAssetManager {
+    private static final Logger LOG = LoggerFactory.getLogger(ModelAssetManager.class);
     private static final String MANIFEST_RESOURCE_PATH = "/model-assets-manifest.json";
     private static final Path MODEL_DIRECTORY = FabricLoader.getInstance()
             .getGameDir()
@@ -63,12 +66,14 @@ public final class ModelAssetManager {
                 ModelAssetManifest manifest = loadManifest();
                 String offlineHelpUrl = buildOfflineHelpUrl(manifest);
                 boolean shouldValidatePreExistingModels = TerrainDiffusionConfig.validateModel();
+                LOG.info("Preparing terrain diffusion model assets in {}", MODEL_DIRECTORY);
                 for (Map.Entry<String, ManifestAsset> assetEntry : manifest.assets.entrySet()) {
                     String fileName = assetEntry.getKey();
                     ManifestAsset assetMetadata = assetEntry.getValue();
                     Path localAssetPath = MODEL_DIRECTORY.resolve(fileName);
                     ensureSingleAsset(localAssetPath, assetMetadata, manifest.revision, offlineHelpUrl, shouldValidatePreExistingModels);
                 }
+                LOG.info("Terrain diffusion model assets ready");
                 READY.set(true);
             } catch (RuntimeException runtimeException) {
                 throw runtimeException;
@@ -94,12 +99,16 @@ public final class ModelAssetManager {
     ) throws IOException, InterruptedException {
         if (Files.exists(localAssetPath)) {
             if (!shouldValidatePreExistingModels) {
+                LOG.info("Using pre-existing model asset '{}' without SHA validation (validate_model=false)",
+                        localAssetPath.getFileName());
                 return;
             }
             String existingHash = sha256Hex(localAssetPath);
             if (existingHash.equalsIgnoreCase(assetMetadata.sha256)) {
+                LOG.info("Model asset '{}' already present and verified", localAssetPath.getFileName());
                 return;
             }
+            LOG.warn("Model asset '{}' hash mismatch. Re-downloading expected revision.", localAssetPath.getFileName());
             Files.delete(localAssetPath);
         }
         downloadAndVerifyAsset(localAssetPath, assetMetadata, revision, offlineHelpUrl);
@@ -111,6 +120,8 @@ public final class ModelAssetManager {
         HttpRequest request = HttpRequest.newBuilder(URI.create(assetMetadata.url)).GET().build();
 
         try {
+            LOG.info("Downloading model asset '{}' ({})",
+                    localAssetPath.getFileName(), humanReadableBytes(assetMetadata.sizeBytes));
             HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
             int statusCode = response.statusCode();
             if (statusCode < HttpURLConnection.HTTP_OK || statusCode >= HttpURLConnection.HTTP_MULT_CHOICE) {
@@ -119,7 +130,7 @@ public final class ModelAssetManager {
 
             try (InputStream responseStream = response.body();
                  OutputStream fileOutputStream = Files.newOutputStream(temporaryAssetPath)) {
-                responseStream.transferTo(fileOutputStream);
+                copyWithProgress(responseStream, fileOutputStream, localAssetPath.getFileName().toString(), assetMetadata.sizeBytes);
             }
 
             String downloadedHash = sha256Hex(temporaryAssetPath);
@@ -129,6 +140,7 @@ public final class ModelAssetManager {
                         + ". Expected " + assetMetadata.sha256 + " but got " + downloadedHash);
             }
             Files.move(temporaryAssetPath, localAssetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            LOG.info("Downloaded and verified model asset '{}'", localAssetPath.getFileName());
         } catch (Exception exception) {
             Files.deleteIfExists(temporaryAssetPath);
             if (isOfflineError(exception)) {
@@ -178,6 +190,37 @@ public final class ModelAssetManager {
         return "https://huggingface.co/" + manifest.repositorySlug + "/tree/" + manifest.revision;
     }
 
+    private static void copyWithProgress(
+            InputStream responseStream,
+            OutputStream fileOutputStream,
+            String fileName,
+            long expectedSizeBytes
+    ) throws IOException {
+        byte[] copyBuffer = new byte[256 * 1024];
+        long downloadedBytes = 0L;
+        int nextProgressPercent = 10;
+        int readCount;
+        while ((readCount = responseStream.read(copyBuffer)) != -1) {
+            fileOutputStream.write(copyBuffer, 0, readCount);
+            downloadedBytes += readCount;
+            if (expectedSizeBytes > 0) {
+                int completedPercent = (int) ((downloadedBytes * 100L) / expectedSizeBytes);
+                while (completedPercent >= nextProgressPercent && nextProgressPercent <= 100) {
+                    LOG.info("Downloading '{}'... {}% ({}/{})",
+                            fileName,
+                            nextProgressPercent,
+                            humanReadableBytes(downloadedBytes),
+                            humanReadableBytes(expectedSizeBytes));
+                    nextProgressPercent += 10;
+                }
+            }
+        }
+        if (expectedSizeBytes <= 0) {
+            LOG.info("Downloading '{}'... {} downloaded",
+                    fileName, humanReadableBytes(downloadedBytes));
+        }
+    }
+
     private static String sha256Hex(Path localFilePath) throws IOException {
         MessageDigest messageDigest = createSha256Digest();
         try (InputStream fileStream = Files.newInputStream(localFilePath);
@@ -204,6 +247,22 @@ public final class ModelAssetManager {
             hexBuilder.append(String.format("%02x", digestByte));
         }
         return hexBuilder.toString();
+    }
+
+    private static String humanReadableBytes(long byteCount) {
+        if (byteCount < 1024L) {
+            return byteCount + " B";
+        }
+        double kibibytes = byteCount / 1024.0;
+        if (kibibytes < 1024.0) {
+            return String.format("%.1f KiB", kibibytes);
+        }
+        double mebibytes = kibibytes / 1024.0;
+        if (mebibytes < 1024.0) {
+            return String.format("%.1f MiB", mebibytes);
+        }
+        double gibibytes = mebibytes / 1024.0;
+        return String.format("%.2f GiB", gibibytes);
     }
 
     private static final class ModelAssetManifest {
