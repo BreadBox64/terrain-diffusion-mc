@@ -40,6 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class ModelAssetManager {
     private static final Logger LOG = LoggerFactory.getLogger(ModelAssetManager.class);
     private static final String MANIFEST_RESOURCE_PATH = "/model-assets-manifest.json";
+    private static final long PROGRESS_LOG_THRESHOLD_BYTES = 100L * 1024L * 1024L;
     private static final Path MODEL_DIRECTORY = FabricLoader.getInstance()
             .getGameDir()
             .resolve("terrain-diffusion-models");
@@ -196,6 +197,7 @@ public final class ModelAssetManager {
             String fileName,
             long expectedSizeBytes
     ) throws IOException {
+        boolean shouldLogProgress = expectedSizeBytes >= PROGRESS_LOG_THRESHOLD_BYTES;
         byte[] copyBuffer = new byte[256 * 1024];
         long downloadedBytes = 0L;
         int nextProgressPercent = 10;
@@ -203,7 +205,7 @@ public final class ModelAssetManager {
         while ((readCount = responseStream.read(copyBuffer)) != -1) {
             fileOutputStream.write(copyBuffer, 0, readCount);
             downloadedBytes += readCount;
-            if (expectedSizeBytes > 0) {
+            if (shouldLogProgress && expectedSizeBytes > 0) {
                 int completedPercent = (int) ((downloadedBytes * 100L) / expectedSizeBytes);
                 while (completedPercent >= nextProgressPercent && nextProgressPercent <= 100) {
                     LOG.info("Downloading '{}'... {}% ({}/{})",
@@ -215,7 +217,7 @@ public final class ModelAssetManager {
                 }
             }
         }
-        if (expectedSizeBytes <= 0) {
+        if (expectedSizeBytes <= 0 || !shouldLogProgress) {
             LOG.info("Downloading '{}'... {} downloaded",
                     fileName, humanReadableBytes(downloadedBytes));
         }
