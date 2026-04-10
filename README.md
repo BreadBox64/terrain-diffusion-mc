@@ -15,11 +15,7 @@ The mod works purely server-side and can be used on multiplayer servers. In v2, 
 ## Installation
 
 1. Download the mod jar from the [releases](https://github.com/xandergos/terrain-diffusion-mc/releases) page and place it in your Minecraft `mods/` folder. Make sure the Minecraft version matches.
-2. Launch Minecraft and create a **Terrain Diffusion** world.
-
-## Creating a World
-
-When creating a world, select the **Terrain Diffusion** world type. Click **Customize** to set the `World Scale` (see [Per-world settings](#per-world-settings) below).
+2. Launch Minecraft, create a world, and select the **Terrain Diffusion** world type. Click **Customize** to set the `World Scale` (see [Per-world settings](#per-world-settings) below).
 
 ## Exploring the World
 
@@ -56,9 +52,8 @@ For Terrain Diffusion worlds, click **Customize** in world creation and set:
 
 This value is saved with the world save and affects:
 
-- block-to-meter mapping (`scale=1` => `30m/block`, `scale=2` => `15m/block`, etc.)
+- how many real-world meters each block represents (`scale=1` => `30m/block`, `scale=2` => `15m/block`, etc.)
 - world max height for newly created worlds (assumes tallest point is 10000 real-world meters)
-- pre-registered worldgen variants for scales `1..6`
 - 2 is recommended to start, or 1 for smaller worlds
 
 ## Building from Source
