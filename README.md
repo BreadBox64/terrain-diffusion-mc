@@ -1,3 +1,5 @@
+<img width="2522" height="723" alt="dramatic_range_sillouhette" src="https://github.com/user-attachments/assets/bafb07a9-5957-499f-85d5-26e7eb90ad7b" />
+
 # Terrain Diffusion Fabric Mod
 
 This is a Minecraft Fabric mod integrating [Terrain Diffusion](https://github.com/xandergos/terrain-diffusion).
