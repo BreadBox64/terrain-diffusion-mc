@@ -9,10 +9,14 @@ import org.slf4j.LoggerFactory;
 import java.nio.FloatBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -281,6 +285,7 @@ public final class OnnxModel implements AutoCloseable {
             LOG.info("Terrain diffusion inference: GPU (CUDA)");
         } catch (Throwable t) {
             LOG.warn("CUDA not available: {} - {}", t.getClass().getSimpleName(), t.getMessage());
+            logCudaLoadDiagnostics(t);
         }
 
         if (!added) {
@@ -300,6 +305,178 @@ public final class OnnxModel implements AutoCloseable {
         if (!added) {
             LOG.info("Terrain diffusion inference: CPU (fallback)");
             LOG.warn("No GPU provider loaded. Check drivers and that the mod jar is the GPU build.");
+        }
+    }
+
+    /**
+     * Emit actionable diagnostics when the ONNX Runtime CUDA provider fails to load.
+     *
+     * <p>On Windows the stock ORT error ("LoadLibrary failed with error 126") does not
+     * indicate which dependency is missing. This method walks the current {@code PATH}
+     * entries, reports which CUDA / cuDNN DLLs are resolvable, flags version conflicts
+     * (multiple {@code cudart64_*.dll} on PATH), and checks the cuDNN 9 split DLLs that
+     * are commonly missing when only {@code cudnn64_9.dll} is present. On non-Windows
+     * hosts a short pointer to the ORT install guide is logged instead.
+     */
+    private static void logCudaLoadDiagnostics(Throwable originalFailure) {
+        try {
+            String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+            boolean isWindows = osName.contains("win");
+            LOG.warn("CUDA provider diagnostics (os='{}', arch='{}', java.vm='{}')",
+                    System.getProperty("os.name"),
+                    System.getProperty("os.arch"),
+                    System.getProperty("java.vm.name"));
+
+            String rawFailureMessage = originalFailure.getMessage() == null ? "" : originalFailure.getMessage();
+            boolean isErrorCode126 = rawFailureMessage.contains("error 126");
+            if (isErrorCode126) {
+                LOG.warn("Windows error 126 indicates a missing DLL dependency of onnxruntime_providers_cuda.dll, " +
+                        "not a missing CUDA install. Typical causes: cuDNN split DLLs missing, wrong CUDA/cuDNN major " +
+                        "version, or a stale CUDA entry earlier on PATH shadowing the expected one.");
+            }
+
+            if (!isWindows) {
+                LOG.warn("On Linux, follow https://onnxruntime.ai/docs/install/#cuda-and-cudnn and make sure " +
+                        "libcudart.so.12 and libcudnn.so.9 are on LD_LIBRARY_PATH.");
+                return;
+            }
+
+            String pathEnvironmentVariable = System.getenv("PATH");
+            if (pathEnvironmentVariable == null || pathEnvironmentVariable.isEmpty()) {
+                LOG.warn("PATH environment variable is empty. CUDA/cuDNN DLLs cannot be located.");
+                return;
+            }
+
+            List<Path> pathDirectories = parseWindowsPathEntries(pathEnvironmentVariable);
+            LOG.warn("PATH contains {} entries. Scanning for CUDA/cuDNN DLLs...", pathDirectories.size());
+
+            List<Path> cudartMatches = findDllOnPath(pathDirectories, "cudart64_");
+            List<Path> cudaRuntime12Matches = findExactDllOnPath(pathDirectories, "cudart64_12.dll");
+            List<Path> cudnnLauncherMatches = findExactDllOnPath(pathDirectories, "cudnn64_9.dll");
+
+            reportDllScan("cudart64_12.dll (CUDA 12 runtime)", cudaRuntime12Matches);
+            reportDllScan("cudnn64_9.dll (cuDNN 9 launcher)", cudnnLauncherMatches);
+
+            if (cudartMatches.size() > 1) {
+                LOG.warn("Multiple cudart64_*.dll versions found on PATH. This can cause error 126 if an older " +
+                        "version is picked up first:");
+                for (Path cudartMatch : cudartMatches) {
+                    LOG.warn("  - {}", cudartMatch);
+                }
+            }
+
+            if (cudaRuntime12Matches.isEmpty()) {
+                LOG.warn("cudart64_12.dll not found on PATH. Install CUDA 12.x and add its bin folder " +
+                        "(e.g. C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.x\\bin) to the system PATH.");
+            }
+            if (cudnnLauncherMatches.isEmpty()) {
+                LOG.warn("cudnn64_9.dll not found on PATH. Install cuDNN 9.x and add its x64 folder " +
+                        "(e.g. C:\\Program Files\\NVIDIA\\CUDNN\\v9.x\\bin\\12.x\\x64) to the system PATH.");
+            } else {
+                checkCudnnSplitDlls(cudnnLauncherMatches.get(0).getParent());
+            }
+
+            LOG.warn("If cudart64_12.dll and cudnn64_9.dll both resolve above but CUDA still fails, check for " +
+                    "stale CUDA 11.x or cuDNN 8.x folders on PATH, verify your NVIDIA driver supports CUDA 12.x, " +
+                    "and ensure the launcher inherits PATH (log out/in or reboot after editing system PATH).");
+        } catch (Throwable diagnosticsFailure) {
+            LOG.warn("Failed to collect CUDA load diagnostics: {}", diagnosticsFailure.toString());
+        }
+    }
+
+    /**
+     * Splits {@code PATH} into directory {@link Path}s, tolerating malformed entries and stripping quotes.
+     */
+    private static List<Path> parseWindowsPathEntries(String pathEnvironmentVariable) {
+        List<Path> parsedDirectories = new ArrayList<>();
+        for (String rawEntry : pathEnvironmentVariable.split(";")) {
+            String trimmedEntry = rawEntry.trim();
+            if (trimmedEntry.isEmpty()) continue;
+            if (trimmedEntry.startsWith("\"") && trimmedEntry.endsWith("\"") && trimmedEntry.length() >= 2) {
+                trimmedEntry = trimmedEntry.substring(1, trimmedEntry.length() - 1);
+            }
+            try {
+                parsedDirectories.add(Paths.get(trimmedEntry));
+            } catch (Exception ignored) {
+            }
+        }
+        return parsedDirectories;
+    }
+
+    /**
+     * Returns all PATH directories that contain a DLL whose filename starts with {@code dllPrefix}
+     * and ends with {@code .dll}. Used to detect multiple version-suffixed copies (e.g. cudart64_11, cudart64_12).
+     */
+    private static List<Path> findDllOnPath(List<Path> pathDirectories, String dllPrefix) {
+        List<Path> matches = new ArrayList<>();
+        for (Path pathDirectory : pathDirectories) {
+            try {
+                if (!Files.isDirectory(pathDirectory)) continue;
+                try (var directoryStream = Files.newDirectoryStream(pathDirectory, dllPrefix + "*.dll")) {
+                    for (Path candidate : directoryStream) {
+                        matches.add(candidate);
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return matches;
+    }
+
+    /**
+     * Returns every PATH directory that contains {@code exactDllName}. The first entry is the one
+     * the Windows loader would pick; additional entries indicate shadowing.
+     */
+    private static List<Path> findExactDllOnPath(List<Path> pathDirectories, String exactDllName) {
+        List<Path> matches = new ArrayList<>();
+        for (Path pathDirectory : pathDirectories) {
+            try {
+                Path candidate = pathDirectory.resolve(exactDllName);
+                if (Files.isRegularFile(candidate)) {
+                    matches.add(candidate);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return matches;
+    }
+
+    private static void reportDllScan(String dllLabel, List<Path> matches) {
+        if (matches.isEmpty()) {
+            LOG.warn("  [MISSING] {}: not found on PATH", dllLabel);
+            return;
+        }
+        LOG.warn("  [OK]      {}: {}", dllLabel, matches.get(0));
+        for (int shadowIndex = 1; shadowIndex < matches.size(); shadowIndex++) {
+            LOG.warn("            (shadowed by earlier PATH entry) {}", matches.get(shadowIndex));
+        }
+    }
+
+    /**
+     * cuDNN 9 is split across multiple DLLs; only shipping {@code cudnn64_9.dll} causes error 126
+     * when the CUDA provider tries to use a cuDNN feature implemented in one of the sub-libraries.
+     */
+    private static void checkCudnnSplitDlls(Path cudnnLauncherDirectory) {
+        if (cudnnLauncherDirectory == null) return;
+        String[] requiredCudnnSplitDlls = {
+                "cudnn_graph64_9.dll",
+                "cudnn_ops64_9.dll",
+                "cudnn_cnn64_9.dll",
+                "cudnn_adv64_9.dll",
+                "cudnn_heuristic64_9.dll",
+                "cudnn_engines_precompiled64_9.dll",
+                "cudnn_engines_runtime_compiled64_9.dll"
+        };
+        List<String> missingSplitDlls = new ArrayList<>();
+        for (String requiredSplitDll : requiredCudnnSplitDlls) {
+            if (!Files.isRegularFile(cudnnLauncherDirectory.resolve(requiredSplitDll))) {
+                missingSplitDlls.add(requiredSplitDll);
+            }
+        }
+        if (!missingSplitDlls.isEmpty()) {
+            LOG.warn("cuDNN 9 directory {} is missing split DLL(s) required by ONNX Runtime: {}. " +
+                    "Reinstall cuDNN 9 and copy the full bin/<cuda>/x64 folder, not just cudnn64_9.dll.",
+                    cudnnLauncherDirectory, missingSplitDlls);
         }
     }
 
