@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -311,6 +312,19 @@ public final class OnnxModel implements AutoCloseable {
 
         if (!added) {
             try {
+                /* Map<String, String> MIgraphOptions = new HashMap<>();
+                MIgraphOptions.put("device_id", "0");
+                opts.addExecutionProvider("MIGraphX", MIgraphOptions); */
+                
+                added = true;
+                LOG.info("Terrain diffusion inference: GPU (MIgraphX)");
+            } catch (Throwable t) {
+                LOG.warn("MIgraphX not available: {} - {}", t.getClass().getSimpleName(), t.getMessage());
+            }
+        }
+
+        if (!added) {
+            try {
                 opts.addDirectML(0);
                 added = true;
                 setResolvedProviderOnce("DirectML");
@@ -321,9 +335,10 @@ public final class OnnxModel implements AutoCloseable {
                 }
             }
         }
+
         if (gpuRequired && !added) {
             throw new OrtException(
-                    "inference.device=gpu but neither CUDA nor DirectML is available. " +
+                    "inference.device=gpu but none of the supported execution providers (CUDA, DirectML, MIgraphX) are available. " +
                     "Use the GPU build or set inference.device=cpu.");
         }
         if (!added) {

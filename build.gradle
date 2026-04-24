@@ -10,12 +10,13 @@ import java.security.MessageDigest
 def useCuda = project.hasProperty('useCuda') && project.property('useCuda').toString().toLowerCase() == 'true'
 def useDml = project.hasProperty('useDml') && project.property('useDml').toString().toLowerCase() == 'true'
 def useCpu = project.hasProperty('useCpu') && project.property('useCpu').toString().toLowerCase() == 'true'
+def useCustom = true
 def withSourcesJar = project.hasProperty('withSourcesJar') && project.property('withSourcesJar').toString().toLowerCase() == 'true'
 
 if ([useCuda, useDml, useCpu].count { it } > 1) {
     throw new GradleException("Only one of -PuseCuda, -PuseDml, or -PuseCpu may be specified at a time.")
 }
-if (!useDml && !useCpu && !useCuda) useDml = true
+//if (!useDml && !useCpu && !useCuda) useDml = true
 
 println "Build variant: ${useCuda ? 'CUDA' : useDml ? 'DirectML (Windows)' : 'CPU'}"
 def modelRepositorySlug = 'xandergos/terrain-diffusion-30m-onnx'
@@ -26,6 +27,8 @@ def generatedManifestFile = new File(generatedManifestDirectory, 'model-assets-m
 def buildVariant = useCuda ? 'cuda' : useDml ? 'windows' : 'cpu'
 version = "${project.mod_version}-${buildVariant}+${project.minecraft_version}"
 group = project.maven_group
+
+apply from: "gradle/onnxruntime.gradle"
 
 base {
     archivesName = project.archives_base_name
@@ -71,7 +74,10 @@ dependencies {
 
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-    if (useCuda) {
+    if(useCustom) {
+        implementation "com.microsoft.onnxruntime:onnxruntime-custom:1.24.3"
+        include "com.microsoft.onnxruntime:onnxruntime-custom:1.24.3"
+    } else if (useCuda) {
         implementation "com.microsoft.onnxruntime:onnxruntime_gpu:1.20.0"
         include "com.microsoft.onnxruntime:onnxruntime_gpu:1.20.0"
     } else if (useCpu) {
@@ -114,6 +120,7 @@ tasks.withType(JavaCompile).configureEach {
     if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
         it.options.release.set(targetJavaVersion)
     }
+    dependsOn "publishOnnxRuntimeToMaven"
 }
 
 java {

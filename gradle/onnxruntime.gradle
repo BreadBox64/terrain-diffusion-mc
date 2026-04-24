@@ -1,0 +1,74 @@
+def ortDir = "${buildDir}/onnxruntime-src"
+def ortBuildDir = "${ortDir}/build/Linux/Release"
+
+tasks.register("cloneONNXRuntime", Exec) {
+	outputs.dir ortDir
+	commandLine "git", "clone",
+		"--branch", "rel-1.24.3",
+		"--depth", "1",
+		"https://github.com/microsoft/onnxruntime",
+		ortDir
+}
+
+tasks.register("buildONNXRuntime", Exec) {
+	dependsOn "cloneONNXRuntime"
+	workingDir ortDir
+
+	environment "JAVA_HOME", "/usr/lib/jvm/java-21-openjdk"
+	environment "PATH", "/usr/lib/jvm/java-21-openjdk/bin:" + System.getenv("PATH")
+
+	commandLine "./build.sh",
+		"--config", "Release",
+		"--build_shared_lib",
+		"--parallel",
+		"--build_java",
+		"--skip_tests",
+		"--use_migraphx",
+		"--migraphx_home", "/opt/rocm",
+		/* "--use_cuda",
+		"--cudnn_home", "/opt/cuda",
+		"--cuda_home", "/opt/cuda", */
+		"--cmake_extra_defines",
+		"onnxruntime_USE_MIGRAPHX=ON",
+		//"onnxruntime_USE_CUDA=ON",
+		"onnxruntime_ENABLE_WERROR=OFF",
+		"onnxruntime_USE_COMPOSABLE_KERNEL=OFF",
+		"CMAKE_CXX_FLAGS='-w'",
+		"CMAKE_POLICY_VERSION_MINIMUM=3.5",
+		"CMAKE_FIND_PACKAGE_PREFER_CONFIG=OFF",
+		"CMAKE_FIND_USE_PACKAGE_REGISTRY=FALSE",
+		"CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=FALSE",
+		"FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER",
+		"CMAKE_HIP_ARCHITECTURES=gfx1100"
+		//"CMAKE_HIP_ARCHITECTURES=gfx1010;gfx1030;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201"
+}
+
+tasks.register("publishONNXRuntimeToMaven") {
+	dependsOn "buildONNXRuntime"
+
+	doLast {
+		def mavenDir = "${buildDir}/local-maven/com/microsoft/onnxruntime/onnxruntime-custom/1.24.3"
+		mkdir mavenDir
+
+		copy {
+			from "${ortBuildDir}/java/build/libs/onnxruntime.jar"
+			into mavenDir
+			rename { "onnxruntime-custom-1.24.3.jar" }
+		}
+
+		copy {
+			from ortBuildDir
+			include "libonnxruntime*.so"
+			into "${mavenDir}/natives/linux-x86_64"
+		}
+
+		file("${mavenDir}/onnxruntime-custom-1.24.3.pom").text = """
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.microsoft.onnxruntime</groupId>
+  <artifactId>onnxruntime-custom</artifactId>
+  <version>1.24.3</version>
+</project>
+"""
+	}
+}
